@@ -1,0 +1,326 @@
+#!/usr/bin/env bash
+# nest-studio-make-linux-build - turn a Windows Nest Studio release into a Linux-runnable layout.
+#
+#   nest-studio-make-linux-build <"Nest Studio Setup x.y.z.exe" | unpacked-windows-dir> [dest-dir]
+#
+# The first argument is either the Windows installer (an NSIS .exe; the app payload is carved
+# out and extracted) or a directory where it was already unpacked (contains nest-studio.exe and
+# resources/). dest-dir defaults to ~/opt/nest-studio; an existing one is moved to <dest-dir>.prev.
+#
+# What it does:
+#   1. Unpacks the installer if given one (cached under ~/.cache/nest-studio-linux).
+#   2. Reads the Electron version out of nest-studio.exe and fetches the matching linux-x64 zip
+#      (via ~/.cache/electron, downloading with npx if needed).
+#   3. Unpacks Electron, renames the binary to nest-studio (so app.isPackaged is true, like the
+#      real installer), extracts app.asar into resources/app and merges app.asar.unpacked.
+#   4. Copies resources/server (the Windows CAM backend + G-code validator), store.json, grpcdata.proto.
+#   5. Patches the main process so Linux is an allowed CAM platform, the backend is killed on quit,
+#      and the auto-updater (Windows-only feed) is skipped. Each patch must match an exact number
+#      of times; a mismatch means upstream changed and the script stops.
+#   6. Installs bash shims named like the non-Windows binaries the app looks for; they exec wine.
+#   7. Writes the launcher (~/.local/bin/nest-studio), a .desktop entry, an icon, a README,
+#      and copies itself to ~/.local/bin for the next update.
+# Nothing is written outside dest-dir, ~/.local/bin, ~/.local/share/applications and ~/.cache.
+set -euo pipefail
+
+SRC="${1:?usage: nest-studio-make-linux-build <installer.exe | windows-install-dir> [dest-dir]}"
+DST="${2:-$HOME/opt/nest-studio}"
+CACHE="${NEST_LINUX_CACHE:-$HOME/.cache/nest-studio-linux}"
+need() { command -v "$1" >/dev/null || { echo "error: $1 is required ($2)" >&2; exit 1; }; }
+need wine "sudo dnf install wine"; need node "sudo dnf install nodejs"; need unzip "sudo dnf install unzip"; need python3 "sudo dnf install python3"
+unset ELECTRON_RUN_AS_NODE
+
+# --- 1. installer -> unpacked directory ------------------------------------------------------
+if [ -f "$SRC" ]; then
+  case "$SRC" in *.exe|*.EXE) ;; *) echo "error: $SRC is neither a directory nor an installer .exe" >&2; exit 1;; esac
+  SRC="$(cd "$(dirname "$SRC")" && pwd)/$(basename "$SRC")"
+  EXTRACT="$CACHE/$(basename "${SRC%.*}")"
+  if [ -s "$EXTRACT/nest-studio.exe" ] && [ -s "$EXTRACT/resources/app.asar" ]; then
+    echo "==> using already unpacked $EXTRACT"
+  else
+    rm -rf "$EXTRACT" "$EXTRACT.partial"; mkdir -p "$EXTRACT.partial"
+    PAYLOAD="$EXTRACT.app-64.7z"
+    trap 'rm -rf "$EXTRACT.partial" "$PAYLOAD"' EXIT
+    echo "==> carving the app payload (7z) out of the installer"
+    python3 - "$SRC" "$PAYLOAD" <<'EOF'
+import mmap, struct, sys
+exe, out = sys.argv[1], sys.argv[2]
+with open(exe, "rb") as f:
+    mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+    off = mm.find(b"7z\xbc\xaf\x27\x1c")          # 7z signature; electron-builder stores app-64.7z uncompressed in the NSIS data
+    if off < 0:
+        sys.exit("error: no 7z payload found in the installer. Unpack it another way (7z x installer.exe, then 7z x '$PLUGINSDIR/app-64.7z') and pass the directory.")
+    next_off, next_size = struct.unpack_from("<QQ", mm, off + 12)
+    total = 32 + next_off + next_size
+    with open(out, "wb") as o:
+        for pos in range(off, off + total, 1 << 24):
+            o.write(mm[pos:min(pos + (1 << 24), off + total)])
+    print(f"    {total / 1048576:.0f} MB payload at offset {off}")
+EOF
+    echo "==> extracting the payload"
+    # The executables inside are BCJ2-filtered, which rules out pure-Python 7z readers (py7zr).
+    if command -v 7zz >/dev/null; then 7zz x -y -o"$EXTRACT.partial" "$PAYLOAD" >/dev/null
+    elif command -v 7z >/dev/null; then 7z x -y -o"$EXTRACT.partial" "$PAYLOAD" >/dev/null
+    elif command -v 7za >/dev/null; then 7za x -y -o"$EXTRACT.partial" "$PAYLOAD" >/dev/null
+    elif command -v bsdtar >/dev/null; then bsdtar -xf "$PAYLOAD" -C "$EXTRACT.partial"
+    else
+      VENV="$CACHE/libarchive-venv"
+      if ! "$VENV/bin/python" -c "import libarchive" >/dev/null 2>&1; then
+        echo "    no 7z tool on PATH (sudo dnf install p7zip p7zip-plugins); using the system libarchive through a private venv"
+        python3 -m venv "$VENV" && "$VENV/bin/pip" -q install libarchive-c
+      fi
+      (cd "$EXTRACT.partial" && "$VENV/bin/python" - "$PAYLOAD" <<'EOF'
+import os, sys, libarchive
+with libarchive.file_reader(sys.argv[1]) as archive:
+    for entry in archive:
+        p = str(entry)
+        if entry.isdir:
+            os.makedirs(p, exist_ok=True); continue
+        os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+        with open(p, "wb") as f:
+            for block in entry.get_blocks():
+                f.write(block)
+EOF
+      )
+    fi
+    rm -f "$PAYLOAD"
+    [ -s "$EXTRACT.partial/nest-studio.exe" ] && [ -s "$EXTRACT.partial/resources/app.asar" ] || { echo "error: extraction did not produce the app files" >&2; exit 1; }
+    mv "$EXTRACT.partial" "$EXTRACT"; trap - EXIT
+    echo "    unpacked to $EXTRACT"
+  fi
+  SRC="$EXTRACT"
+fi
+SRC="$(cd "$SRC" && pwd)"
+[ -f "$SRC/nest-studio.exe" ] && [ -f "$SRC/resources/app.asar" ] || { echo "error: $SRC does not look like a Nest Studio Windows install" >&2; exit 1; }
+
+# --- 2. matching Electron ----------------------------------------------------------------------
+ELECTRON_VERSION="${ELECTRON_VERSION:-$(grep -aoE 'Electron/[0-9]+\.[0-9]+\.[0-9]+' "$SRC/nest-studio.exe" | head -1 | cut -d/ -f2)}"
+[ -n "$ELECTRON_VERSION" ] || { echo "error: could not detect the Electron version; set ELECTRON_VERSION=x.y.z" >&2; exit 1; }
+echo "==> Electron $ELECTRON_VERSION"
+find_zip() { find "$HOME/.cache/electron" -name "electron-v${ELECTRON_VERSION}-linux-x64.zip" 2>/dev/null | head -1; }
+ZIP="$(find_zip)"
+if [ -z "$ZIP" ]; then
+  echo "==> downloading electron $ELECTRON_VERSION via npx"
+  npx --yes "electron@${ELECTRON_VERSION}" --version >/dev/null 2>&1 || true
+  ZIP="$(find_zip)"
+fi
+[ -n "$ZIP" ] || { echo "error: electron zip not found in ~/.cache/electron" >&2; exit 1; }
+
+# --- 3. layout -----------------------------------------------------------------------------------
+if [ -e "$DST" ]; then
+  rm -rf "${DST}.prev"; mv "$DST" "${DST}.prev"; echo "==> previous build moved to ${DST}.prev"
+fi
+mkdir -p "$DST"; cd "$DST"
+echo "==> unpacking electron"; unzip -q "$ZIP"; mv electron nest-studio; rm -f resources/default_app.asar
+
+echo "==> extracting app.asar"
+node - "$SRC/resources/app.asar" "$DST/resources/app" <<'EOF'
+const fs=require("fs"),path=require("path");
+const [asar,out]=process.argv.slice(2);
+const fd=fs.openSync(asar,"r");
+const b=Buffer.alloc(16); fs.readSync(fd,b,0,16,0);
+const headerSize=b.readUInt32LE(4), jsonSize=b.readUInt32LE(12);
+const hb=Buffer.alloc(jsonSize); fs.readSync(fd,hb,0,jsonSize,16);
+const hdr=JSON.parse(hb.toString()); const base=8+headerSize; let n=0;
+function walk(node,p){for(const k of Object.keys(node.files||{})){const e=node.files[k];const fp=p?p+"/"+k:k;
+ if(e.files){fs.mkdirSync(path.join(out,fp),{recursive:true});walk(e,fp);continue;}
+ if(e.unpacked)continue;
+ const buf=Buffer.alloc(e.size); if(e.size) fs.readSync(fd,buf,0,e.size,base+parseInt(e.offset));
+ fs.mkdirSync(path.dirname(path.join(out,fp)),{recursive:true}); fs.writeFileSync(path.join(out,fp),buf,{mode:e.executable?0o755:0o644}); n++;}}
+walk(hdr,""); console.log("    "+n+" files");
+EOF
+cp -a --reflink=auto "$SRC/resources/app.asar.unpacked/." "$DST/resources/app/"
+echo "==> copying server + resources"
+cp -a --reflink=auto "$SRC/resources/server" "$DST/resources/server"
+for f in store.json grpcdata.proto checkGcode.nc checkGcodeResult.json; do [ -f "$SRC/resources/$f" ] && cp -a --reflink=auto "$SRC/resources/$f" "$DST/resources/"; done
+
+# --- 4. patches ----------------------------------------------------------------------------------
+echo "==> patching main process"
+MAIN="$DST/resources/app/out/main"
+cp "$MAIN/index.js" "$MAIN/index.js.orig"
+UPG="$(ls "$MAIN"/upgrade-*.js | head -1)"; cp "$UPG" "$UPG.orig"
+node - "$MAIN/index.js" "$UPG" <<'EOF'
+const fs=require("fs"); const [indexFile,upgradeFile]=process.argv.slice(2);
+function patch(file,edits){let s=fs.readFileSync(file,"utf8");
+ for(const [name,from,to,expected=1] of edits){const n=s.split(from).length-1;
+  if(n!==expected) throw new Error(`${file}: patch "${name}" matched ${n} times (expected ${expected}) - upstream changed, update the patch (see docs/PORTING-NOTES.md section 6)`);
+  s=s.split(from).join(to); console.log("    ok: "+name);} fs.writeFileSync(file,s);}
+patch(indexFile,[
+ ["allow linux CAM spawn",
+  `    if (process.platform !== "win32" && process.platform !== "darwin") {
+      appLog$2.warn("CAM backend is not supported on this platform:", process.platform);`,
+  `    if (process.platform !== "win32" && process.platform !== "darwin" && process.platform !== "linux") {
+      appLog$2.warn("CAM backend is not supported on this platform:", process.platform);`],
+ ["kill wine backend on quit (linux too)",
+  `  const terminated = killTrackedCamProcesses();
+  if (process.platform === "darwin") {
+    try {
+      child_process.execSync('pkill -9 -f "Nest Studio Service"', { stdio: "ignore" });`,
+  `  const terminated = killTrackedCamProcesses();
+  if (process.platform !== "win32") {
+    try {
+      child_process.execSync('pkill -9 -f "Nest Studio Service"', { stdio: "ignore" });`],
+ ["linux port-owner diagnostics via ss",
+  `    if (process.platform === "darwin") {
+      const output = node_child_process.execFileSync(
+        "/usr/sbin/lsof",`,
+  `    if (process.platform === "linux") {
+      const output = node_child_process.execFileSync("ss", ["-ltnpH", \`sport = :\${port}\`], {
+        encoding: "utf8",
+        timeout: PROCESS_INSPECTION_TIMEOUT_MS
+      });
+      return [...output.matchAll(/pid=(\\d+)/g)].map((match) => ({ pid: Number(match[1]) }));
+    }
+    if (process.platform === "darwin") {
+      const output = node_child_process.execFileSync(
+        "/usr/sbin/lsof",`],
+ ["linux: narrow backend kill pattern (const)",
+  `const CAM_HTTP_PORT = 9630;`,
+  `const CAM_HTTP_PORT = 9630;
+const CAM_PKILL_BS = String.fromCharCode(92);
+const CAM_PKILL_PATTERN = process.platform === "linux" ? "^Z:" + CAM_PKILL_BS + CAM_PKILL_BS + ".*" + CAM_PKILL_BS + CAM_PKILL_BS + "3Axis" + CAM_PKILL_BS + CAM_PKILL_BS + "Nest Studio Service" + CAM_PKILL_BS + ".exe$" : "Nest Studio Service";`],
+ ["linux: pkill only the wine backend process (both call sites)",
+  `child_process.execSync('pkill -9 -f "Nest Studio Service"', { stdio: "ignore" });`,
+  `child_process.execFileSync("pkill", ["-9", "-f", CAM_PKILL_PATTERN], { stdio: "ignore" });`, 2]]);
+patch(upgradeFile,[
+ ["skip updater on linux (no linux feed)",
+  `  return !electron.app.isPackaged && true && process.env.NEST_FORCE_UPDATE_CHECK !== "1";`,
+  `  return process.platform === "linux" || !electron.app.isPackaged && true && process.env.NEST_FORCE_UPDATE_CHECK !== "1";`]]);
+EOF
+node --check "$MAIN/index.js"; node --check "$UPG"
+
+# --- 5. shims ------------------------------------------------------------------------------------
+echo "==> installing wine shims"
+SRV="$DST/resources/server"
+cat > "$SRV/3Axis/Nest Studio Service" <<'EOF'
+#!/usr/bin/env bash
+# Linux shim for the Nest Studio CAM backend (Windows PyInstaller bundle) - runs it under Wine.
+# Electron spawns "./3Axis/Nest Studio Service" on non-Windows and probes http://127.0.0.1:9630/api/version.
+# Output goes to a log file because Electron never drains the child's pipes (a full pipe would block Wine).
+# exec keeps Electron's child PID on the Wine process; setpriv --pdeathsig kills it if Electron dies.
+set -u
+cd "$(dirname "$0")" || exit 1
+export WINEDEBUG="${WINEDEBUG:--all}"
+LOG_DIR="${NEST_CAM_LOG_DIR:-$HOME/.config/Nest Studio/logs}"
+mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR=/tmp
+if setpriv --pdeathsig KILL true 2>/dev/null; then
+  exec setpriv --pdeathsig KILL wine "./Nest Studio Service.exe" </dev/null >>"$LOG_DIR/cam-wine.log" 2>&1
+else
+  exec wine "./Nest Studio Service.exe" </dev/null >>"$LOG_DIR/cam-wine.log" 2>&1
+fi
+EOF
+cat > "$SRV/gcodeCheck/gcode_validator_cli" <<'EOF'
+#!/usr/bin/env bash
+# Linux shim: runs the Windows G-code validator under Wine (Wine accepts Linux paths in its --*_file args).
+set -u
+cd "$(dirname "$0")" || exit 1
+export WINEDEBUG="${WINEDEBUG:--all}"
+exec wine ./gcode_validator_cli.exe "$@" </dev/null
+EOF
+chmod 755 "$SRV/3Axis/Nest Studio Service" "$SRV/gcodeCheck/gcode_validator_cli"
+
+# --- 6. launcher, icon, desktop entry, README --------------------------------------------------
+echo "==> launcher, icon, desktop entry"
+mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
+cat > "$HOME/.local/bin/nest-studio" <<EOF
+#!/usr/bin/env bash
+# Launch Nest Studio (Linux build: native Electron + CAM backend under Wine).
+# ELECTRON_RUN_AS_NODE leaks from VS Code terminals and would turn the app into a headless
+# Node process that exits at once, so clear it first.
+unset ELECTRON_RUN_AS_NODE
+exec "$DST/nest-studio" "\$@"
+EOF
+chmod 755 "$HOME/.local/bin/nest-studio"
+LOGO="$(ls "$DST"/resources/app/out/renderer/assets/logo-icon-*.svg 2>/dev/null | head -1)"
+if [ -n "$LOGO" ] && command -v magick >/dev/null; then
+  magick -size 512x512 xc:none -fill '#303030' -draw 'roundrectangle 0,0 511,511 96,96' "$DST/.bg.png"
+  magick -background none -density 384 "$LOGO" -resize 360x360 "$DST/.logo.png"
+  magick "$DST/.bg.png" "$DST/.logo.png" -gravity center -composite "$DST/nest-studio.png"
+  rm -f "$DST/.bg.png" "$DST/.logo.png"
+fi
+cat > "$HOME/.local/share/applications/nest-studio.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Nest Studio
+Comment=Nest Studio CAM for Nestworks CNC
+Exec=$HOME/.local/bin/nest-studio %U
+Icon=$DST/nest-studio.png
+Terminal=false
+Categories=Graphics;Engineering;
+StartupWMClass=nest-studio
+MimeType=x-scheme-handler/neststudio;
+EOF
+update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+cat > "$DST/README-LINUX.md" <<'EOF'
+# Nest Studio on Linux
+
+This directory is a Linux-runnable layout of the Windows-only Nest Studio release, generated by
+`nest-studio-make-linux-build` (a copy lives in `~/.local/bin`). The project that produced it,
+with the full porting notes, is the nest-studio-linux repository.
+
+## How it works
+
+- `nest-studio` is the stock Electron linux-x64 binary (same version the Windows build
+  embeds), renamed so Electron treats the app as packaged, exactly like the installer does.
+- `resources/app/` is the app's `app.asar` extracted, with `app.asar.unpacked` merged in.
+  The serialport native module ships a linux-x64 prebuild, so USB serial works natively.
+- `resources/server/3Axis/Nest Studio Service.exe` is the CAM backend: a Windows PyInstaller
+  bundle whose `cam_core` modules are compiled `.pyd` files with no Linux equivalent. It runs
+  under Wine. Electron spawns the bash shim `resources/server/3Axis/Nest Studio Service`
+  (the name it looks for on non-Windows platforms), which execs `wine`. The app talks to it
+  over HTTP on `127.0.0.1:9630` and health-checks `/api/version`.
+- `resources/server/gcodeCheck/gcode_validator_cli` is the same kind of shim for the
+  G-code validator. Wine accepts Linux paths in its arguments, so no path translation is needed.
+
+## Patches to the main process (originals kept as `*.orig`)
+
+`resources/app/out/main/index.js`
+1. `spawnServeProcess`: Linux added to the allowed CAM platforms.
+2. `terminateServeProcess`: the backend is also killed on quit on Linux (was macOS-only), so the
+   Wine backend never outlives the app. On Linux the kill pattern is narrowed to the Wine process
+   itself (command line ending in `3Axis\Nest Studio Service.exe`); the upstream pattern
+   `pkill -f "Nest Studio Service"` would also kill any terminal or editor whose command line
+   merely contains that text.
+3. `inspectCamPortOwners`: Linux branch using `ss` for "port still occupied" diagnostics.
+
+`resources/app/out/main/upgrade-*.js`
+4. Update checks are skipped on Linux. The update feed only has Windows/macOS packages.
+
+The backend shim also uses `setpriv --pdeathsig KILL`, so the kernel kills the backend if
+Electron dies without running its quit handlers.
+
+## Running
+
+- App menu entry "Nest Studio", or `nest-studio` in a terminal.
+- Logs: `~/.config/Nest Studio/logs/main.log` (app), `processing.log` (CAM supervisor),
+  `cam-wine.log` (Wine's own output from the backend).
+- Settings and projects live under `~/.config/Nest Studio/`.
+- Startup takes about 4 seconds; the CAM phase is the Wine backend coming up.
+
+## Updating to a new release
+
+1. Download the new Windows installer. The feed
+   `https://studio.worksbase.com/software/Nestworks/prod/win/latest.yml` names the file
+   (`Nest Studio Setup <version>.exe`, in the same directory as the yml).
+2. `nest-studio-make-linux-build "Nest Studio Setup <version>.exe"`
+   The installer is unpacked into `~/.cache/nest-studio-linux`, the previous build is moved to
+   `~/opt/nest-studio.prev`, and your settings in `~/.config/Nest Studio` are untouched. If the
+   app's code changed so a patch no longer matches, the script stops and names the patch.
+
+## Troubleshooting
+
+- App exits instantly with no window: the shell has `ELECTRON_RUN_AS_NODE=1` (VS Code
+  terminals do this). The launcher unsets it; if you run the binary directly, `unset` it first.
+- CAM phase fails / "recovering": run the backend by hand to see Wine's errors:
+  `cd ~/opt/nest-studio/resources/server/3Axis && wine "Nest Studio Service.exe"`
+  then `curl 127.0.0.1:9630/api/version` from another terminal.
+- Stray backend after a crash: `pkill -f "Nest Studio Service.exe"`.
+- Wine uses the default prefix (`~/.wine`). To isolate it, export `WINEPREFIX` before launching.
+- USB serial: your user must be in the `dialout` group.
+- The GPU status block the app logs at startup is captured before the GPU process is up and
+  always reads "disabled"; it is not a real indication. WebGL works.
+EOF
+if [ "$(readlink -f "$0")" != "$(readlink -f "$HOME/.local/bin/nest-studio-make-linux-build" 2>/dev/null || true)" ]; then
+  install -m 755 "$0" "$HOME/.local/bin/nest-studio-make-linux-build"
+fi
+echo "==> done: $DST  (run: nest-studio)"
