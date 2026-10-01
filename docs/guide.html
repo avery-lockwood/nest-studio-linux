@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nest Studio on Linux</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #F4F5F2; --surface: #FFFFFF; --ink: #1B1F23; --muted: #5C6670;
+    --accent: #0B6E8F; --accent-ink: #FFFFFF; --warn: #B9431E; --warn-bg: #FBEDE6;
+    --rule: #D7DBD6; --code-bg: #ECEEEA; --tint: #E3EEF2;
+    --display: "Barlow Semi Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+    --body: "Source Sans 3", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #15181B; --surface: #1E2226; --ink: #E4E7E2; --muted: #9AA3AB;
+      --accent: #4FB3D1; --accent-ink: #0F1B20; --warn: #E0714A; --warn-bg: #2A1E19;
+      --rule: #2C3238; --code-bg: #23282D; --tint: #1C2A30;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #15181B; --surface: #1E2226; --ink: #E4E7E2; --muted: #9AA3AB;
+    --accent: #4FB3D1; --accent-ink: #0F1B20; --warn: #E0714A; --warn-bg: #2A1E19;
+    --rule: #2C3238; --code-bg: #23282D; --tint: #1C2A30;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.55; padding-inline: 20px; padding-block: 0 64px; }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  header { padding-block: 44px 28px; border-bottom: 1px solid var(--rule); }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+  h1 { font-family: var(--display); font-weight: 600; font-size: clamp(38px, 7vw, 56px); line-height: 1; letter-spacing: -.01em; margin: 0 0 14px; text-wrap: balance; }
+  .lede { font-size: 20px; max-width: 62ch; margin: 0 0 22px; color: var(--ink); }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 10px; margin: 0; padding: 0; list-style: none; }
+  .meta li { font-family: var(--mono); font-size: 12.5px; padding: 4px 9px; border: 1px solid var(--rule); border-radius: 4px; color: var(--muted); background: var(--surface); }
+  .meta li b { color: var(--ink); font-weight: 500; }
+  nav.toc { margin: 26px 0 6px; font-size: 15px; }
+  nav.toc ol { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; padding: 0; list-style: none; }
+  nav.toc a { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; }
+  nav.toc a:hover, nav.toc a:focus-visible { border-bottom-color: var(--accent); outline: none; }
+  h2 { font-family: var(--display); font-weight: 600; font-size: 30px; line-height: 1.1; margin: 48px 0 12px; letter-spacing: -.005em; text-wrap: balance; }
+  h3 { font-family: var(--display); font-weight: 600; font-size: 21px; margin: 28px 0 8px; }
+  p { margin: 0 0 14px; max-width: 70ch; }
+  ul, ol { padding-left: 1.3em; margin: 0 0 14px; max-width: 70ch; }
+  li { margin-bottom: 5px; }
+  a { color: var(--accent); }
+  code { font-family: var(--mono); font-size: .88em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  pre { font-family: var(--mono); font-size: 14px; line-height: 1.5; background: var(--code-bg); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; overflow-x: auto; margin: 0 0 16px; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .steps { list-style: none; padding: 0; margin: 0 0 18px; counter-reset: none; max-width: none; }
+  .steps li { display: grid; grid-template-columns: 58px 1fr; gap: 14px; padding: 14px 0; border-top: 1px solid var(--rule); margin: 0; }
+  .steps li:last-child { border-bottom: 1px solid var(--rule); }
+  .steps .n { font-family: var(--mono); font-size: 13px; color: var(--accent); padding-top: 4px; font-weight: 500; }
+  .steps p { margin-bottom: 8px; }
+  .steps pre { margin-bottom: 6px; }
+  .diagram { display: grid; gap: 10px; margin: 18px 0 22px; }
+  .row { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; }
+  .box { flex: 1 1 180px; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; min-width: 0; }
+  .box.native { border-top: 3px solid var(--accent); }
+  .box.wine { border-top: 3px solid var(--warn); }
+  .box h4 { margin: 0 0 4px; font-family: var(--display); font-size: 18px; font-weight: 600; }
+  .box p { margin: 0; font-size: 14.5px; color: var(--muted); max-width: none; }
+  .link { flex: 0 0 auto; align-self: center; font-family: var(--mono); font-size: 12px; color: var(--muted); text-align: center; padding: 0 2px; line-height: 1.3; }
+  .legend { font-family: var(--mono); font-size: 12px; color: var(--muted); display: flex; gap: 16px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
+  .callout { border-left: 3px solid var(--warn); background: var(--warn-bg); padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 0 0 16px; max-width: 70ch; }
+  .callout p { margin: 0; }
+  .note { border-left: 3px solid var(--accent); background: var(--tint); padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 0 0 16px; max-width: 70ch; }
+  .note p { margin: 0; }
+  .tablewrap { overflow-x: auto; margin: 0 0 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 15.5px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--rule); }
+  th { font-family: var(--display); font-size: 16px; font-weight: 600; }
+  td code { white-space: nowrap; }
+  td:first-child { min-width: 180px; }
+  dl { margin: 0 0 16px; max-width: 70ch; }
+  dt { font-weight: 600; margin-top: 12px; }
+  dd { margin: 2px 0 0; }
+  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--rule); font-size: 14.5px; color: var(--muted); }
+  footer p { max-width: none; }
+  @media (max-width: 480px) { .steps li { grid-template-columns: 1fr; gap: 4px; } .link { width: 100%; } }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<header>
+  <p class="eyebrow">Field notes · CAM software</p>
+  <h1>Nest Studio on Linux</h1>
+  <p class="lede">Nest Studio, the CAM program for Nestworks CNC machines, only ships for Windows and macOS. This page explains how to run it on Linux with the frontend native and the CAM backend under Wine, what the build script does, and what to check when a new release comes out.</p>
+  <ul class="meta">
+    <li>Nest Studio <b>1.2.0</b></li>
+    <li>Electron <b>39.8.10</b></li>
+    <li>Tested on <b>Fedora 42 · Wine 10.20</b></li>
+    <li>Startup to ready <b>≈ 4 s</b></li>
+  </ul>
+  <nav class="toc" aria-label="Contents">
+    <ol>
+      <li><a href="#install">Install</a></li>
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#update">Updating</a></li>
+      <li><a href="#trouble">Troubleshooting</a></li>
+      <li><a href="#maintain">For maintainers</a></li>
+      <li><a href="#status">What is and isn't tested</a></li>
+    </ol>
+  </nav>
+</header>
+
+<div class="note"><p>Nothing here redistributes Nest Studio. You need your own copy of the Windows installer; the script rearranges and patches what the installer already contains.</p></div>
+
+<h2 id="install">Install</h2>
+<p>Packages first. On Fedora:</p>
+<pre><code>sudo dnf install wine nodejs unzip p7zip p7zip-plugins ImageMagick</code></pre>
+<p>Wine runs the backend, Node unpacks the app archive and applies the patches, 7z opens the installer (without it the script falls back to the system libarchive through a small private Python environment), and ImageMagick only makes the desktop icon. Other distributions need the same packages under their own names.</p>
+<ol class="steps">
+  <li><span class="n">N10</span><div><p>Download the Windows installer. The update feed at <code>https://studio.worksbase.com/software/Nestworks/prod/win/latest.yml</code> names the current file (<code>Nest Studio Setup 1.2.0.exe</code>, about 630 MB) and its checksum; the file sits in the same directory as the yml.</p></div></li>
+  <li><span class="n">N20</span><div><p>Get the build script and run it on the installer.</p><pre><code>git clone &lt;repository url&gt; nest-studio-linux
+./nest-studio-linux/nest-studio-make-linux-build "Nest Studio Setup 1.2.0.exe"</code></pre><p>The first run unpacks the installer and downloads the matching Electron build; after that a rebuild takes about five seconds. The result lands in <code>~/opt/nest-studio</code> with a launcher in <code>~/.local/bin/nest-studio</code>, an application-menu entry, and a <code>README-LINUX.md</code> describing the layout. The script copies itself to <code>~/.local/bin</code> so later updates are one command.</p></div></li>
+  <li><span class="n">N30</span><div><p>Start it: <code>nest-studio</code> in a terminal, or "Nest Studio" in the application menu. The loading screen shows three phases; the CAM phase is the Wine backend coming up, two to six seconds depending on whether Wine is already warm.</p></div></li>
+</ol>
+
+<h2 id="how">How it works</h2>
+<p>The Windows release is an ordinary Electron app plus a separate CAM server. The frontend is plain JavaScript and runs on the stock Linux Electron build. The server is a PyInstaller bundle whose CAM kernels are compiled Windows Python extensions with no source, so it stays a Windows program and runs under Wine. The app itself starts, health-checks and restarts the backend over HTTP, exactly as it does on Windows.</p>
+<div class="diagram">
+  <div class="row">
+    <div class="box native"><h4>Electron frontend</h4><p>Stock Electron 39 for Linux, binary renamed <code>nest-studio</code>. Loads the extracted <code>resources/app/</code>. Serial ports work natively (the bundled serialport module ships a Linux build).</p></div>
+    <div class="link">HTTP<br>127.0.0.1:9630<br>→</div>
+    <div class="box wine"><h4>CAM backend under Wine</h4><p><code>Nest Studio Service.exe</code>, started through a bash shim named <code>Nest Studio Service</code>, the file the app looks for on non-Windows systems. Answers <code>/api/version</code> and does all toolpath work.</p></div>
+  </div>
+  <div class="row">
+    <div class="box native"><h4>G-code check</h4><p>Same idea: a shim named <code>gcode_validator_cli</code> execs Wine on the Windows validator. Wine accepts Linux paths, so no translation is needed.</p></div>
+    <div class="box native"><h4>Patches</h4><p>Four small edits to the main process, originals kept as <code>.orig</code>: Linux allowed as backend platform, backend killed on quit, port diagnostics via <code>ss</code>, auto-updater skipped (its feed has no Linux packages).</p></div>
+  </div>
+  <div class="legend"><span><i style="background:var(--accent)"></i>native Linux</span><span><i style="background:var(--warn)"></i>Windows code under Wine</span></div>
+</div>
+<p>Two details carry most of the weight. Electron decides whether an app is "packaged" from the executable's name, and only a packaged app resolves <code>resources/server</code> where the installer puts it, which is why the binary is renamed rather than run as <code>electron app.asar</code>. And the app spawns the backend with output pipes it never reads, so the shim redirects Wine's output to <code>~/.config/Nest Studio/logs/cam-wine.log</code>; otherwise the backend would stall once the pipe filled.</p>
+
+<h2 id="update">Updating</h2>
+<pre><code>nest-studio-make-linux-build "Nest Studio Setup &lt;new version&gt;.exe"</code></pre>
+<p>The previous build is kept as <code>~/opt/nest-studio.prev</code>, and settings and projects in <code>~/.config/Nest Studio</code> are untouched. Each patch has to match the upstream code an exact number of times; if a release changes that code, the script stops and names the patch instead of producing a half-patched app. The maintainer section below lists where to look.</p>
+
+<h2 id="trouble">Troubleshooting</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Symptom</th><th>Cause and fix</th></tr></thead>
+  <tbody>
+    <tr><td>Nothing happens, exit code 0</td><td><code>ELECTRON_RUN_AS_NODE=1</code> is set in the environment; VS Code terminals do this. The launcher unsets it. If you run the binary directly, unset it first.</td></tr>
+    <tr><td>Loading screen ends in "failed"</td><td>The backend did not answer on port 9630 within 60 seconds. Run it by hand to see Wine's errors: <code>cd ~/opt/nest-studio/resources/server/3Axis &amp;&amp; wine "Nest Studio Service.exe"</code>, then <code>curl 127.0.0.1:9630/api/version</code> from another terminal.</td></tr>
+    <tr><td>"CAM port 9630 is still occupied"</td><td>A stray backend from a crash: <code>pkill -f "Nest Studio Service.exe"</code>.</td></tr>
+    <tr><td>No serial ports</td><td>Add your user to the <code>dialout</code> group and log in again.</td></tr>
+    <tr><td>Log says the GPU is disabled</td><td>The app writes that block before its GPU process exists, so it always reads "disabled". WebGL works; ignore it.</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Logs live in <code>~/.config/Nest Studio/logs/</code>: <code>main.log</code> for the app, <code>processing.log</code> for the backend supervisor, <code>cam-wine.log</code> for Wine.</p>
+
+<h2 id="maintain">For maintainers</h2>
+<p>Things learned the hard way, so nobody has to learn them twice.</p>
+<dl>
+  <dt>The app kills processes by name</dt>
+  <dd>On start and quit upstream runs <code>pkill -9 -f "Nest Studio Service"</code>. That matches any process whose command line contains the text: a terminal tailing a log at that path, an editor with the shim open, your own debugging shell. The Linux patch narrows it to the Wine process (command line ending in <code>3Axis\Nest Studio Service.exe</code>). If you ever debug an unpatched build and your shell dies with exit code 1 the moment the app starts, this is why.</dd>
+  <dt>Backslashes through four layers</dt>
+  <dd>That pattern passes through a shell heredoc, a JS template literal and a JS string before pkill sees it. One layer too few and <code>\3Axis</code> becomes a back-reference, pkill exits 2, and the app treats that as a fatal startup error. The patch builds the pattern from <code>String.fromCharCode(92)</code> so no layer can touch it.</dd>
+  <dt>The installer is a 7z archive in disguise</dt>
+  <dd>Inside the NSIS installer the app files sit as one uncompressed 7z archive (<code>app-64.7z</code>), so the script finds the 7z signature and carves the archive out with Python; any 7z tool or libarchive extracts it. Pure-Python readers fail because the executables use the BCJ2 filter. Running the installer under Wine with <code>/S</code> does not work; it aborts before writing anything.</dd>
+  <dt>Where the patches anchor</dt>
+  <dd>In <code>resources/app/out/main/index.js.orig</code>: the string <code>"CAM backend is not supported on this platform:"</code> (platform check in <code>spawnServeProcess</code>), the two <code>pkill -9 -f</code> call sites (<code>restartServeProcess</code>, <code>terminateServeProcess</code>), <code>"/usr/sbin/lsof"</code> in <code>inspectCamPortOwners</code>, and <code>const CAM_HTTP_PORT</code>. In <code>upgrade-&lt;hash&gt;.js</code>: <code>shouldSkipUnpackagedUpdateCheck</code>. Also confirm the non-Windows backend path is still <code>./3Axis/Nest Studio Service</code> and the validator path <code>gcodeCheck/gcode_validator_cli</code>; the shims are written under those names.</dd>
+  <dt>Verifying a build</dt>
+  <dd><code>tools/smoke-test.py</code> launches the app, waits for the window and the backend, checks <code>/api/version</code>, quits with SIGTERM and verifies nothing is left running. Expect the backend ready in about 3 seconds and the window at about 4.</dd>
+</dl>
+
+<h2 id="status">What is and isn't tested</h2>
+<p>Verified: startup, backend health and supervision, quitting with no leftovers, the G-code validator, WebGL rendering, repeated rebuilds from the installer. Not yet exercised: long toolpath computations (the app's 3-second heartbeat needs the backend to keep answering while busy), 4-axis and image-to-STL features (ONNX models under Wine), the account login and its <code>neststudio://</code> callback, and connecting to a machine over the network or USB. Reports on any of these are the most useful contribution.</p>
+
+<footer>
+  <p>Build script, smoke test and the full porting notes are in the <strong>nest-studio-linux</strong> repository. Scripts and notes are MIT licensed; Nest Studio belongs to its owners and is not distributed.</p>
+</footer>
+</div>
+</body>
+</html>

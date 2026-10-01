@@ -11,8 +11,9 @@ script only rearranges and patches what the installer contains. The scripts and 
 MIT licensed; Nest Studio itself remains under its own license.
 
 Tested on Fedora 42 with Wine 10.20 and Nest Studio 1.2.0 (September 2026). See
-[docs/PORTING-NOTES.md](docs/PORTING-NOTES.md) for how it works and what to do when a new
-upstream version breaks a patch.
+[docs/GUIDE.md](docs/GUIDE.md) for a one-page guide (also as [docs/guide.html](docs/guide.html)
+for opening in a browser) and [docs/PORTING-NOTES.md](docs/PORTING-NOTES.md) for how it works
+and what to do when a new upstream version breaks a patch.
 
 ## Requirements
 
