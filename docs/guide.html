@@ -118,7 +118,7 @@
 <p>Wine runs the backend, Node unpacks the app archive and applies the patches, 7z opens the installer (without it the script falls back to the system libarchive through a small private Python environment), and ImageMagick only makes the desktop icon. Other distributions need the same packages under their own names.</p>
 <ol class="steps">
   <li><span class="n">N10</span><div><p>Download the Windows installer. The update feed at <code>https://studio.worksbase.com/software/Nestworks/prod/win/latest.yml</code> names the current file (<code>Nest Studio Setup 1.2.0.exe</code>, about 630 MB) and its checksum; the file sits in the same directory as the yml.</p></div></li>
-  <li><span class="n">N20</span><div><p>Get the build script and run it on the installer.</p><pre><code>git clone &lt;repository url&gt; nest-studio-linux
+  <li><span class="n">N20</span><div><p>Get the build script and run it on the installer.</p><pre><code>git clone https://github.com/avery-lockwood/nest-studio-linux.git
 ./nest-studio-linux/nest-studio-make-linux-build "Nest Studio Setup 1.2.0.exe"</code></pre><p>The first run unpacks the installer and downloads the matching Electron build; after that a rebuild takes about five seconds. The result lands in <code>~/opt/nest-studio</code> with a launcher in <code>~/.local/bin/nest-studio</code>, an application-menu entry, and a <code>README-LINUX.md</code> describing the layout. The script copies itself to <code>~/.local/bin</code> so later updates are one command.</p></div></li>
   <li><span class="n">N30</span><div><p>Start it: <code>nest-studio</code> in a terminal, or "Nest Studio" in the application menu. The loading screen shows three phases; the CAM phase is the Wine backend coming up, two to six seconds depending on whether Wine is already warm.</p></div></li>
 </ol>
@@ -177,7 +177,7 @@
 <p>Verified: startup, backend health and supervision, quitting with no leftovers, the G-code validator, WebGL rendering, repeated rebuilds from the installer. Not yet exercised: long toolpath computations (the app's 3-second heartbeat needs the backend to keep answering while busy), 4-axis and image-to-STL features (ONNX models under Wine), the account login and its <code>neststudio://</code> callback, and connecting to a machine over the network or USB. Reports on any of these are the most useful contribution.</p>
 
 <footer>
-  <p>Build script, smoke test and the full porting notes are in the <strong>nest-studio-linux</strong> repository. Scripts and notes are MIT licensed; Nest Studio belongs to its owners and is not distributed.</p>
+  <p>Build script, smoke test and the full porting notes are in the <a href="https://github.com/avery-lockwood/nest-studio-linux">nest-studio-linux</a> repository. Scripts and notes are MIT licensed; Nest Studio belongs to its owners and is not distributed.</p>
 </footer>
 </div>
 </body>

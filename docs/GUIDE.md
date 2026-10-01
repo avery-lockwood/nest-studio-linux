@@ -39,7 +39,7 @@ directory as the yml.
 **N20. Get the build script and run it on the installer.**
 
 ```sh
-git clone <repository url> nest-studio-linux
+git clone https://github.com/avery-lockwood/nest-studio-linux.git
 ./nest-studio-linux/nest-studio-make-linux-build "Nest Studio Setup 1.2.0.exe"
 ```
 
@@ -156,5 +156,5 @@ of these are the most useful contribution.
 ---
 
 Build script, smoke test and the full porting notes are in the **nest-studio-linux**
-repository. Scripts and notes are MIT licensed; Nest Studio belongs to its owners and is not
+repository (https://github.com/avery-lockwood/nest-studio-linux). Scripts and notes are MIT licensed; Nest Studio belongs to its owners and is not
 distributed.

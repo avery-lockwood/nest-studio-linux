@@ -40,7 +40,7 @@ Other distributions: the same packages under their local names. Nothing is Fedor
    file (`Nest Studio Setup <version>.exe`) and its sha512; the file sits next to the yml.
 2. Build:
    ```sh
-   git clone <this repository> nest-studio-linux
+   git clone https://github.com/avery-lockwood/nest-studio-linux.git
    ./nest-studio-linux/nest-studio-make-linux-build "Nest Studio Setup 1.2.0.exe"
    ```
    About five seconds after the one-time unpack and Electron download. The result lands in
